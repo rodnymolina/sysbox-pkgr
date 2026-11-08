@@ -30,8 +30,13 @@ on:
         required: false
         default: harness-fix
         type: string
+      make_target:
+        description: "Make target to run in the sysbox repo (empty = skip test-deb)"
+        required: false
+        default: ""
+        type: string
       testpath:
-        description: "Test file or directory for 'make test-sysbox-installer' (empty = skip test-deb)"
+        description: "Optional TESTPATH passed to the make target"
         required: false
         default: ""
         type: string
@@ -101,9 +106,9 @@ jobs:
           ' || true
 
   test-deb:
-    if: inputs.testpath != ''
+    if: inputs.make_target != ''
     runs-on: ubuntu-22.04
-    timeout-minutes: 150
+    timeout-minutes: 300
     steps:
       - name: checkout sysbox
         uses: actions/checkout@v4
@@ -139,8 +144,11 @@ jobs:
           curl -fsSL -o "sysbox-pkgr/deb/build/amd64/ubuntu-jammy/$(basename "${DEB_URL}")" "${DEB_URL}"
           ls -l sysbox-pkgr/deb/build/amd64/ubuntu-jammy
 
-      - name: run installer tests against the deb
-        run: make test-sysbox-installer TESTPATH=${{ inputs.testpath }}
+      - name: run tests against the deb
+        env:
+          MAKE_TARGET: ${{ inputs.make_target }}
+          TESTPATH: ${{ inputs.testpath }}
+        run: make "${MAKE_TARGET}" TESTPATH="${TESTPATH}"
 
       - name: collect logs on failure
         if: failure()
