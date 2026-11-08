@@ -20,6 +20,11 @@ on:
         required: true
         default: "42452842974"
         type: string
+      deb_url:
+        description: "If set, test the deb at this URL instead of the artifact (test-deb only)"
+        required: false
+        default: ""
+        type: string
       sysbox_ref:
         description: "Ref of the sysbox repo providing the test harness"
         required: false
@@ -96,12 +101,22 @@ jobs:
       # The test container installs the package from a path relative to the
       # sysbox source tree, which is mounted into the container.
       - name: download deb package
+        if: inputs.deb_url == ''
         uses: actions/download-artifact@v4
         with:
           name: deb-amd64
           path: sysbox-pkgr/deb/build/amd64/ubuntu-jammy
           run-id: ${{ inputs.deb_run_id }}
           github-token: ${{ github.token }}
+
+      - name: download deb package from url
+        if: inputs.deb_url != ''
+        env:
+          DEB_URL: ${{ inputs.deb_url }}
+        run: |
+          mkdir -p sysbox-pkgr/deb/build/amd64/ubuntu-jammy
+          curl -fsSL -o "sysbox-pkgr/deb/build/amd64/ubuntu-jammy/$(basename "${DEB_URL}")" "${DEB_URL}"
+          ls -l sysbox-pkgr/deb/build/amd64/ubuntu-jammy
 
       - name: run installer tests against the deb
         run: make test-sysbox-installer TESTPATH=${{ inputs.testpath }}
