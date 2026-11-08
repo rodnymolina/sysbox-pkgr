@@ -44,6 +44,27 @@ defaults:
     shell: bash
 
 jobs:
+  kernel-info:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-22.04, ubuntu-22.04-arm, ubuntu-24.04]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: report kernel features relevant to sysbox
+        run: |
+          echo "runner: ${{ matrix.runner }}"
+          uname -mr
+          echo "--- shiftfs"
+          grep -c shiftfs /proc/filesystems || true
+          modinfo shiftfs 2>&1 | head -3 || true
+          sudo modprobe shiftfs 2>&1 | head -2 || true
+          grep -c shiftfs /proc/filesystems || true
+          ls /lib/modules/$(uname -r)/kernel/fs 2>/dev/null | grep -i shift || echo "no shiftfs module file"
+          echo "--- idmapped mounts / overlayfs"
+          grep -E "overlay|fuse" /proc/filesystems || true
+          zcat /proc/config.gz 2>/dev/null | grep -E "CONFIG_USER_NS=|CONFIG_OVERLAY_FS=" || grep -E "CONFIG_USER_NS=|CONFIG_OVERLAY_FS=" /boot/config-$(uname -r) || true
+
   install-check:
     runs-on: ubuntu-22.04
     steps:
