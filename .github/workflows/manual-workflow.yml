@@ -40,6 +40,16 @@ on:
         required: false
         default: ""
         type: string
+      skip_scenarios:
+        description: "Space-separated scenarios to skip (TEST_SYSBOX_SKIP_SCENARIOS)"
+        required: false
+        default: "rootfs_cloning"
+        type: string
+      skip_suites:
+        description: "Space-separated suites to skip (TEST_SYSBOX_SKIP_SUITES)"
+        required: false
+        default: "tests/pods/pods.sh"
+        type: string
 
 permissions:
   contents: read
@@ -148,7 +158,12 @@ jobs:
         env:
           MAKE_TARGET: ${{ inputs.make_target }}
           TESTPATH: ${{ inputs.testpath }}
-        run: make "${MAKE_TARGET}" TESTPATH="${TESTPATH}"
+          SKIP_SCENARIOS: ${{ inputs.skip_scenarios }}
+          SKIP_SUITES: ${{ inputs.skip_suites }}
+        run: |
+          make "${MAKE_TARGET}" TESTPATH="${TESTPATH}" \
+              TEST_SYSBOX_SKIP_SCENARIOS="${SKIP_SCENARIOS}" \
+              TEST_SYSBOX_SKIP_SUITES="${SKIP_SUITES}"
 
       - name: collect logs on failure
         if: failure()
