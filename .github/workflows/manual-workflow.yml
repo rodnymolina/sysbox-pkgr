@@ -1,52 +1,84 @@
 #
-# GitHub Actions manual workflow.
+# Probe: run the sysbox installer test flow against the deb built by build.yml.
 #
-# The main purpose of this workflow is to allow us (developers) to make
-# quick changes to CI jobs without having to push them into the repository.
-# This workflow file serves as a template that we can modify anytime that we
-# need to experiment with new CI changes. The process to follow in those
-# cases is fairly simple:
-#
-# 1. Create a topic-branch where to commit your changes (e.g. dev-branch).
-#
-# 2. Modify this file so that it looks as close as possible to the desired CI
-#    job that will be eventually merged to the repo. Let's refer to this workflow
-#    as a 'testing' workflow to differentiate it from the one in the 'master'
-#    branch.
-#
-# 3. Head over to the 'actions' portal within the repo we're working on, and
-#    click on the 'Manual Workflow". Then find the button "Run workflow" and
-#    click on it. Finally, choose the branch over which our 'testing' workflow
-#    was submitted.
-#
-# 4. Github will now run this latest 'testing' version of the workflow, and
-#    not the one being stored in the master branch.
-#
-# 5. Repeat above cycle as many times as required, and when done, place the
-#    workflow changes in a new file; do not make permanent changes to this
-#    file as this one is just expected to serve as a template to ease our
-#    live during CI definition & testing.
+# This replaces the manual-workflow template on this probe branch only, and is
+# dispatched through the "Manual Workflow" entry (see the original template).
 #
 
 name: Manual Workflow
 
-# Runs on-demand
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      testpath:
+        description: "Test file or directory passed to 'make test-sysbox-installer'"
+        required: false
+        default: tests/dind/basic.bats
+        type: string
+
+permissions:
+  contents: read
 
 defaults:
   run:
     shell: bash
 
 jobs:
-  sysbox_pkg_test:
-    runs-on: [self-hosted, Linux, X64, "${{ matrix.distro }}"]
-    strategy:
-      fail-fast: false
-      matrix:
-        distro: [ubuntu-focal]
+  build:
+    uses: ./.github/workflows/build.yml
+    with:
+      sysbox_repo: ${{ vars.SYSBOX_REPO || 'nestybox/sysbox' }}
+      ref: master
+      build_k8s: false
+
+  test-deb:
+    needs: build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 150
     steps:
-      - name: precheckout-cleanup
+      - name: checkout sysbox
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.SYSBOX_REPO || 'nestybox/sysbox' }}
+          ref: master
+          submodules: recursive
+          fetch-depth: 0
+
+      # The test harness needs a lot of disk space.
+      - name: free up disk space
         run: |
-          sudo rm -rf *
-      - name: checkout
-        uses: actions/checkout@v2
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost \
+              /usr/local/lib/android
+          sudo docker system prune -af
+          df -h
+
+      # The test container installs the package from a path relative to the
+      # sysbox source tree, which is mounted into the container.
+      - name: download deb package
+        uses: actions/download-artifact@v4
+        with:
+          name: deb-amd64
+          path: sysbox-pkgr/deb/build/amd64/ubuntu-jammy
+
+      - name: show package and host
+        run: |
+          ls -l sysbox-pkgr/deb/build/amd64/ubuntu-jammy
+          cat VERSION
+          uname -r
+          docker version --format '{{.Server.Version}}'
+          df -h /
+
+      - name: run installer tests against the deb
+        run: make test-sysbox-installer TESTPATH=${{ inputs.testpath }}
+
+      - name: collect logs on failure
+        if: failure()
+        run: |
+          docker ps -a || true
+          docker logs sysbox-test 2>&1 | tail -n 1000 || true
+
+      - name: cleanup
+        if: always()
+        run: |
+          make test-cleanup || true
+          docker system prune -a -f || true
