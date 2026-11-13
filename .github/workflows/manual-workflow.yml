@@ -115,6 +115,70 @@ jobs:
               dpkg -s sysbox-ce | grep -i "^status"
           ' || true
 
+  host-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-22.04
+          - arch: arm64
+            runner: ubuntu-22.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - name: download deb package
+        uses: actions/download-artifact@v4
+        with:
+          name: deb-${{ matrix.arch }}
+          path: debs
+          run-id: ${{ inputs.deb_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: package sanity
+        run: |
+          deb=$(ls debs/sysbox-ce_*.deb)
+          dpkg-deb --info "${deb}" | grep -E "Package|Version|Architecture"
+          want=${{ matrix.arch }}
+          [ "$(dpkg-deb --field "${deb}" Architecture)" = "${want}" ]
+          dpkg-deb --contents "${deb}" | grep -E "usr/bin/sysbox-(runc|mgr|fs)$"
+
+      - name: install the deb on the runner host
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+              -o Dpkg::Options::=--force-confold ./debs/sysbox-ce_*.deb
+          dpkg -s sysbox-ce | grep -i "^status"
+
+      - name: services, versions and docker runtime
+        run: |
+          systemctl is-active sysbox sysbox-mgr sysbox-fs
+          sysbox-runc --version | head -2
+          sysbox-mgr --version | head -1
+          sysbox-fs --version | head -1
+          docker info 2>/dev/null | grep -E "Runtimes:.*sysbox-runc"
+
+      - name: system container uses a user namespace
+        run: |
+          docker run --rm --runtime=sysbox-runc ghcr.io/nestybox/alpine:latest sh -c '
+              cat /proc/self/uid_map
+              host_uid=$(awk "NR==1{print \$2}" /proc/self/uid_map)
+              [ "${host_uid}" != "0" ]'
+
+      - name: sysbox-fs virtualizes /proc and /sys
+        run: |
+          docker run --rm --runtime=sysbox-runc ghcr.io/nestybox/alpine:latest sh -c '
+              grep -c sysboxfs /proc/self/mountinfo
+              grep -q sysboxfs /proc/self/mountinfo'
+
+      - name: docker-in-docker
+        run: |
+          id=$(docker run -d --rm --runtime=sysbox-runc ghcr.io/nestybox/alpine-docker-dbg:latest tail -f /dev/null)
+          docker exec -d "${id}" sh -c "dockerd > /var/log/dockerd.log 2>&1"
+          for i in $(seq 1 40); do docker exec "${id}" docker ps >/dev/null 2>&1 && break; sleep 1; done
+          docker exec "${id}" docker run --rm ghcr.io/nestybox/alpine:latest echo inner-container-ok
+          docker rm -f "${id}" >/dev/null
+
   test-deb:
     if: inputs.make_target != ''
     runs-on: ubuntu-22.04
